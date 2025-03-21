@@ -13,7 +13,7 @@ func main() {
 	fmt.Println("Hello Railway Prometheus Exporter")
 
 	if err := godotenv.Load(); err != nil {
-		logger.Stderr.Error("Error loading environment variables", "error", err.Error())
+		logger.Stderr.Error("Error loading .env file into environment", "error", err.Error())
 		os.Exit(1)
 	}
 
