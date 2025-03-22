@@ -1,0 +1,49 @@
+type: http_request
+model: http_request
+id: rq_TquYQ7mPrn
+createdAt: 2025-03-22T19:21:25.215739700
+updatedAt: 2025-03-22T19:32:54.327398600
+workspaceId: wk_Pdr5gY4Mot
+folderId: null
+authentication:
+  token: ${[ RAILWAY_API_TOKEN ]}
+authenticationType: bearer
+body:
+  query: |-
+    {
+      metrics(
+        startDate: "2025-03-22T19:21:57.418Z"
+        endDate: null
+        sampleRateSeconds: 240
+        averagingWindowSeconds: 1440
+        environmentId: ""
+        serviceId: ""
+        measurements: [CPU_USAGE, CPU_LIMIT, MEMORY_USAGE_GB, MEMORY_LIMIT_GB, NETWORK_RX_GB, NETWORK_TX_GB]
+      ) {
+        measurement
+        values {
+          ts
+          value
+        }
+      }
+    }
+bodyType: graphql
+description: ''
+headers:
+- enabled: true
+  name: Content-Type
+  value: application/json
+  id: FhtFI9yYrM
+- enabled: false
+  name: ''
+  value: ''
+  id: rqY06EUrcF
+- enabled: true
+  name: ''
+  value: ''
+  id: nFXiPD26ep
+method: POST
+name: Service Metrics
+sortPriority: -1742671300000.0
+url: https://backboard.railway.com/graphql/v2
+urlParameters: []
