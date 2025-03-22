@@ -23,42 +23,42 @@ The metrics below will be what this exporter exposes to Prometheus via the metri
     *   TYPE: Gauge
     *   Units: Cores
     *   Description: Current CPU usage of the Railway service.
-    *   Labels: `environment_id`, `service_id`
+    *   Labels: `environment_id`, `environment_name`, `service_id`, `service_name`, `project_name`
     *   Value: `data.metrics[].values[].value` (where `measurement` is `CPU_USAGE`)
 
 2.  `railway_service_cpu_limit`:
     *   TYPE: Gauge
     *   Units: Cores
     *   Description: Configured CPU limit for the Railway service.
-    *   Labels: `environment_id`, `service_id`
+    *   Labels: `environment_id`, `environment_name`, `service_id`, `service_name`, `project_name`
     *   Value: `data.metrics[].values[].value` (where `measurement` is `CPU_LIMIT`)
 
 3.  `railway_service_memory_usage_gb`:
     *   TYPE: Gauge
     *   Units: Gigabytes
     *   Description: Current memory usage of the Railway service.
-    *   Labels: `environment_id`, `service_id`
+    *   Labels: `environment_id`, `environment_name`, `service_id`, `service_name`, `project_name`
     *   Value: `data.metrics[].values[].value` (where `measurement` is `MEMORY_USAGE_GB`)
 
 4.  `railway_service_memory_limit_gb`:
     *   TYPE: Gauge
     *   Units: Gigabytes
     *   Description: Configured memory limit for the Railway service.
-    *   Labels: `environment_id`, `service_id`
+    *   Labels: `environment_id`, `environment_name`, `service_id`, `service_name`, `project_name`
     *   Value: `data.metrics[].values[].value` (where `measurement` is `MEMORY_LIMIT_GB`)
 
 5.  `railway_service_network_rx_gb_total`:
     *   TYPE: Counter
     *   Units: Gigabytes
     *   Description: Total network received data for the Railway service.
-    *   Labels: `environment_id`, `service_id`
+    *   Labels: `environment_id`, `environment_name`, `service_id`, `service_name`, `project_name`
     *   Value: `data.metrics[].values[].value` (where `measurement` is `NETWORK_RX_GB`)
 
 6.  `railway_service_network_tx_gb_total`:
     *   TYPE: Counter
     *   Units: Gigabytes
     *   Description: Total network transmitted data for the Railway service.
-    *   Labels: `environment_id`, `service_id`
+    *   Labels: `environment_id`, `environment_name`, `service_id`, `service_name`, `project_name`
     *   Value: `data.metrics[].values[].value` (where `measurement` is `NETWORK_TX_GB`)
 
 ### Derived Metrics (Calculated in the Exporter):
@@ -67,14 +67,14 @@ The metrics below will be what this exporter exposes to Prometheus via the metri
     *   TYPE: Gauge
     *   Units: Percentage (0-1)
     *   Description: CPU utilization percentage of the Railway service.
-    *   Labels: `environment_id`, `service_id`
+    *   Labels: `environment_id`, `environment_name`, `service_id`, `service_name`, `project_name`
     *   Calculation: `railway_service_cpu_usage / railway_service_cpu_limit`
 
 2.  `railway_service_memory_utilization`:
     *   TYPE: Gauge
     *   Units: Percentage (0-1)
     *   Description: Memory utilization percentage of the Railway service.
-    *   Labels: `environment_id`, `service_id`
+    *   Labels: `environment_id`, `environment_name`, `service_id`, `service_name`, `project_name`
     *   Calculation: `railway_service_memory_usage_gb / railway_service_memory_limit_gb`
 
 ### Exporter Health Metrics:
