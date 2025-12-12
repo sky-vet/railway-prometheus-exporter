@@ -1,10 +1,12 @@
 # Railway Prometheus Exporter
 
+Monitor all your Railway services in Prometheus with zero configuration
+
 A custom Prometheus exporter for monitoring your Railway deployments. Export CPU usage, memory consumption, and network metrics from Railway services to Prometheus for simple Railway service monitoring with minimal setup.
 
 ## About Railway Prometheus Exporter
 
-The Railway Prometheus Exporter makes it easy to monitor your Railway services using the Prometheus-based technologies you're likely already familiar with.
+The Prometheus Exporter makes it easy to monitor your Railway services using any Prometheus metric compatible ingest solution.
 
 This exporter uses a pull-based model. When your Prometheus service periodically scrapes the `/metrics` endpoint provided by this service, the exporter fetches the latest metrics from Railway's API.
 
@@ -32,7 +34,6 @@ The exporter collects:
 
 ## Dependencies
 
-- **Go 1.23+**: Comes for free with RailPack
 - **Railway API Key**: Account level token makes multi-service monitoring easy
 - **Railway Projects**: Active Railway projects and services to monitor
 - **Prometheus Server**: To scrape and store the exported metrics
@@ -62,6 +63,9 @@ Just deploy this using the Railway Template!
 | `ENVIRONMENT_TARGETS` | Project-environment pairs in format `projectId:environmentId,projectId:environmentId` | - | Yes |
 | `PORT` | HTTP server port for metrics endpoint | - | Yes |
 | `DEBUG` | Enable debug logging (true/false) | `false` | No |
+| `ENABLE_CACHE`  | Enable/disable caching (true/false) | `true` | No |
+| `METRICS_CACHE_TTL` | Seconds to cache metric values | `30` | No |
+| `DISCOVERY_CACHE_TTL` | Seconds to cache service/environment data | `300` | No |
 
 **Getting Railway Credentials:**
 
