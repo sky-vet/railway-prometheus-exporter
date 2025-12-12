@@ -27,9 +27,17 @@ func main() {
 
 	logger.Stdout.Info("Starting Railway Prometheus Exporter",
 		"port", cfg.Port,
-		"environment_id", cfg.EnvironmentId,
-		"project_count", len(cfg.ProjectIds),
+		"target_count", len(cfg.Targets),
 	)
+
+	// Log configured targets
+	for i, target := range cfg.Targets {
+		logger.Stdout.Info("Configured target",
+			"index", i+1,
+			"project_id", target.ProjectID,
+			"environment_id", target.EnvironmentID,
+		)
+	}
 
 	// Create Railway API client
 	railwayClient := railway.NewClient(cfg.RailwayApiKey)
@@ -37,8 +45,7 @@ func main() {
 	// Create and register Prometheus collector
 	railwayCollector := collector.NewRailwayCollector(
 		railwayClient,
-		cfg.EnvironmentId,
-		cfg.ProjectIds,
+		cfg.Targets,
 	)
 	prometheus.MustRegister(railwayCollector)
 
