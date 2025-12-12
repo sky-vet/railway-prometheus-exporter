@@ -8,6 +8,7 @@ type Config struct {
 	RailwayApiKey string   `env:"RAILWAY_API_KEY,required"`
 	EnvironmentId string   `env:"ENVIRONMENT_ID,required"`
 	ProjectIds    []string `env:"PROJECT_IDS,required" envSeparator:","`
+	Port          string   `env:"PORT" envDefault:"9090"`
 }
 
 func GetConfig() (*Config, error) {
