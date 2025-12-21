@@ -193,13 +193,17 @@ func (c *Client) executeQuery(query string, variables map[string]interface{}, re
 }
 
 // GetProjectServices retrieves all services for a given project
-func (c *Client) GetProjectServices(projectID string) ([]ServiceNode, error) {
+// Returns the services list, a boolean indicating cache hit, and an error
+func (c *Client) GetProjectServices(projectID string) ([]ServiceNode, bool, error) {
 	// Check cache first
 	if c.cacheTTLs.EnableCache && c.cache != nil {
 		cacheKey := fmt.Sprintf("project_services:%s", projectID)
 		if cached, ok := c.cache.Get(cacheKey); ok {
 			if services, okType := cached.([]ServiceNode); okType {
-				return services, nil
+				logger.Stdout.Debug("Cache hit for project services",
+					"project_id", projectID,
+					"service_count", len(services))
+				return services, true, nil
 			}
 			logger.Stderr.Warn("Invalid cached type for project services, refetching",
 				"project_id", projectID)
@@ -227,11 +231,11 @@ func (c *Client) GetProjectServices(projectID string) ([]ServiceNode, error) {
 
 	var response ProjectServicesResponse
 	if err := c.executeQuery(query, variables, &response); err != nil {
-		return nil, fmt.Errorf("failed to get project services: %w", err)
+		return nil, false, fmt.Errorf("failed to get project services: %w", err)
 	}
 
 	if len(response.Errors) > 0 {
-		return nil, fmt.Errorf("graphql error: %s", response.Errors[0].Message)
+		return nil, false, fmt.Errorf("graphql error: %s", response.Errors[0].Message)
 	}
 
 	result := response.Data.Project.Services.Edges
@@ -242,17 +246,25 @@ func (c *Client) GetProjectServices(projectID string) ([]ServiceNode, error) {
 		c.cache.Set(cacheKey, result, c.cacheTTLs.DiscoveryTTL)
 	}
 
-	return result, nil
+	logger.Stdout.Debug("Cache miss for project services, fetched from API",
+		"project_id", projectID,
+		"service_count", len(result))
+
+	return result, false, nil
 }
 
 // GetServiceInfo retrieves metadata about a specific service
-func (c *Client) GetServiceInfo(serviceID string) (*ServiceInfo, error) {
+// Returns the service info, a boolean indicating cache hit, and an error
+func (c *Client) GetServiceInfo(serviceID string) (*ServiceInfo, bool, error) {
 	// Check cache first
 	if c.cacheTTLs.EnableCache && c.cache != nil {
 		cacheKey := fmt.Sprintf("service_info:%s", serviceID)
 		if cached, ok := c.cache.Get(cacheKey); ok {
 			if serviceInfo, okType := cached.(*ServiceInfo); okType {
-				return serviceInfo, nil
+				logger.Stdout.Debug("Cache hit for service info",
+					"service_id", serviceID,
+					"service_name", serviceInfo.Name)
+				return serviceInfo, true, nil
 			}
 			logger.Stderr.Warn("Invalid cached type for service info, refetching",
 				"service_id", serviceID)
@@ -278,11 +290,11 @@ func (c *Client) GetServiceInfo(serviceID string) (*ServiceInfo, error) {
 
 	var response ServiceInfoResponse
 	if err := c.executeQuery(query, variables, &response); err != nil {
-		return nil, fmt.Errorf("failed to get service info: %w", err)
+		return nil, false, fmt.Errorf("failed to get service info: %w", err)
 	}
 
 	if len(response.Errors) > 0 {
-		return nil, fmt.Errorf("graphql error: %s", response.Errors[0].Message)
+		return nil, false, fmt.Errorf("graphql error: %s", response.Errors[0].Message)
 	}
 
 	result := &response.Data.Service
@@ -293,17 +305,25 @@ func (c *Client) GetServiceInfo(serviceID string) (*ServiceInfo, error) {
 		c.cache.Set(cacheKey, result, c.cacheTTLs.DiscoveryTTL)
 	}
 
-	return result, nil
+	logger.Stdout.Debug("Cache miss for service info, fetched from API",
+		"service_id", serviceID,
+		"service_name", result.Name)
+
+	return result, false, nil
 }
 
 // GetEnvironmentInfo retrieves metadata about a specific environment
-func (c *Client) GetEnvironmentInfo(environmentID string) (*EnvironmentInfo, error) {
+// Returns the environment info, a boolean indicating cache hit, and an error
+func (c *Client) GetEnvironmentInfo(environmentID string) (*EnvironmentInfo, bool, error) {
 	// Check cache first
 	if c.cacheTTLs.EnableCache && c.cache != nil {
 		cacheKey := fmt.Sprintf("env_info:%s", environmentID)
 		if cached, ok := c.cache.Get(cacheKey); ok {
 			if envInfo, okType := cached.(*EnvironmentInfo); okType {
-				return envInfo, nil
+				logger.Stdout.Debug("Cache hit for environment info",
+					"environment_id", environmentID,
+					"environment_name", envInfo.Name)
+				return envInfo, true, nil
 			}
 			logger.Stderr.Warn("Invalid cached type for environment info, refetching",
 				"environment_id", environmentID)
@@ -326,11 +346,11 @@ func (c *Client) GetEnvironmentInfo(environmentID string) (*EnvironmentInfo, err
 
 	var response EnvironmentInfoResponse
 	if err := c.executeQuery(query, variables, &response); err != nil {
-		return nil, fmt.Errorf("failed to get environment info: %w", err)
+		return nil, false, fmt.Errorf("failed to get environment info: %w", err)
 	}
 
 	if len(response.Errors) > 0 {
-		return nil, fmt.Errorf("graphql error: %s", response.Errors[0].Message)
+		return nil, false, fmt.Errorf("graphql error: %s", response.Errors[0].Message)
 	}
 
 	result := &response.Data.Environment
@@ -341,17 +361,26 @@ func (c *Client) GetEnvironmentInfo(environmentID string) (*EnvironmentInfo, err
 		c.cache.Set(cacheKey, result, c.cacheTTLs.DiscoveryTTL)
 	}
 
-	return result, nil
+	logger.Stdout.Debug("Cache miss for environment info, fetched from API",
+		"environment_id", environmentID,
+		"environment_name", result.Name)
+
+	return result, false, nil
 }
 
 // GetMetrics retrieves current metrics for a specific service
-func (c *Client) GetMetrics(environmentID, serviceID string) (map[string]float64, error) {
+// Returns the metrics map, a boolean indicating cache hit, and an error
+func (c *Client) GetMetrics(environmentID, serviceID string) (map[string]float64, bool, error) {
 	// Check cache first
 	if c.cacheTTLs.EnableCache && c.cache != nil {
 		cacheKey := fmt.Sprintf("metrics:%s:%s", environmentID, serviceID)
 		if cached, ok := c.cache.Get(cacheKey); ok {
 			if metrics, okType := cached.(map[string]float64); okType {
-				return metrics, nil
+				logger.Stdout.Debug("Cache hit for metrics",
+					"environment_id", environmentID,
+					"service_id", serviceID,
+					"metric_count", len(metrics))
+				return metrics, true, nil
 			}
 			logger.Stderr.Warn("Invalid cached type for metrics, refetching",
 				"environment_id", environmentID,
@@ -390,11 +419,11 @@ func (c *Client) GetMetrics(environmentID, serviceID string) (map[string]float64
 
 	var response MetricsResponse
 	if err := c.executeQuery(query, variables, &response); err != nil {
-		return nil, fmt.Errorf("failed to get metrics: %w", err)
+		return nil, false, fmt.Errorf("failed to get metrics: %w", err)
 	}
 
 	if len(response.Errors) > 0 {
-		return nil, fmt.Errorf("graphql error: %s", response.Errors[0].Message)
+		return nil, false, fmt.Errorf("graphql error: %s", response.Errors[0].Message)
 	}
 
 	// Extract the latest value for each metric
@@ -413,5 +442,10 @@ func (c *Client) GetMetrics(environmentID, serviceID string) (map[string]float64
 		c.cache.Set(cacheKey, metrics, c.cacheTTLs.MetricsTTL)
 	}
 
-	return metrics, nil
+	logger.Stdout.Debug("Cache miss for metrics, fetched from API",
+		"environment_id", environmentID,
+		"service_id", serviceID,
+		"metric_count", len(metrics))
+
+	return metrics, false, nil
 }

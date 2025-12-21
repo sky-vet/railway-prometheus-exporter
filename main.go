@@ -171,7 +171,7 @@ func warmupCache(client *railway.Client, targets []config.EnvironmentTarget) {
 			defer wg.Done()
 
 			// Pre-fetch environment info and services
-			envInfo, err := client.GetEnvironmentInfo(t.EnvironmentID)
+			envInfo, _, err := client.GetEnvironmentInfo(t.EnvironmentID)
 			if err != nil {
 				logger.Stderr.Error("Failed to warm up environment info",
 					"environment_id", t.EnvironmentID,
@@ -179,7 +179,7 @@ func warmupCache(client *railway.Client, targets []config.EnvironmentTarget) {
 				return
 			}
 
-			services, err := client.GetProjectServices(t.ProjectID)
+			services, _, err := client.GetProjectServices(t.ProjectID)
 			if err != nil {
 				logger.Stderr.Error("Failed to warm up project services",
 					"project_id", t.ProjectID,
@@ -189,7 +189,7 @@ func warmupCache(client *railway.Client, targets []config.EnvironmentTarget) {
 
 			// Pre-fetch service info and metrics for each service
 			for _, svc := range services {
-				if _, err := client.GetServiceInfo(svc.Node.ID); err != nil {
+				if _, _, err := client.GetServiceInfo(svc.Node.ID); err != nil {
 					logger.Stderr.Error("Failed to warm up service info",
 						"project_id", t.ProjectID,
 						"environment_id", envInfo.ID,
@@ -197,7 +197,7 @@ func warmupCache(client *railway.Client, targets []config.EnvironmentTarget) {
 						"error", err)
 				}
 
-				if _, err := client.GetMetrics(envInfo.ID, svc.Node.ID); err != nil {
+				if _, _, err := client.GetMetrics(envInfo.ID, svc.Node.ID); err != nil {
 					logger.Stderr.Error("Failed to warm up service metrics",
 						"project_id", t.ProjectID,
 						"environment_id", envInfo.ID,

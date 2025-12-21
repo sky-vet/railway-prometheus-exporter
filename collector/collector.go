@@ -108,7 +108,7 @@ func (c *RailwayCollector) Collect(ch chan<- prometheus.Metric) {
 // collectTargetMetrics collects metrics for all services in a project-environment pair
 func (c *RailwayCollector) collectTargetMetrics(ch chan<- prometheus.Metric, target config.EnvironmentTarget) error {
 	// Get environment info for this target
-	envInfo, err := c.client.GetEnvironmentInfo(target.EnvironmentID)
+	envInfo, envCacheHit, err := c.client.GetEnvironmentInfo(target.EnvironmentID)
 	if err != nil {
 		return fmt.Errorf("failed to get environment info: %w", err)
 	}
@@ -120,7 +120,7 @@ func (c *RailwayCollector) collectTargetMetrics(ch chan<- prometheus.Metric, tar
 	}
 
 	// Get all services for this project
-	services, err := c.client.GetProjectServices(target.ProjectID)
+	services, servicesCacheHit, err := c.client.GetProjectServices(target.ProjectID)
 	if err != nil {
 		return fmt.Errorf("failed to get services: %w", err)
 	}
@@ -130,6 +130,8 @@ func (c *RailwayCollector) collectTargetMetrics(ch chan<- prometheus.Metric, tar
 		"environment_id", target.EnvironmentID,
 		"environment_name", envInfo.Name,
 		"service_count", len(services),
+		"env_cache_hit", envCacheHit,
+		"services_cache_hit", servicesCacheHit,
 	)
 
 	// Collect metrics for each service
@@ -155,13 +157,13 @@ func (c *RailwayCollector) collectTargetMetrics(ch chan<- prometheus.Metric, tar
 // collectServiceMetrics collects metrics for a single service
 func (c *RailwayCollector) collectServiceMetrics(ch chan<- prometheus.Metric, serviceID, serviceName, environmentID string, envInfo *railway.EnvironmentInfo) error {
 	// Get service info to get project name
-	serviceInfo, err := c.client.GetServiceInfo(serviceID)
+	serviceInfo, serviceInfoCacheHit, err := c.client.GetServiceInfo(serviceID)
 	if err != nil {
 		return fmt.Errorf("failed to get service info: %w", err)
 	}
 
 	// Get current metrics
-	metrics, err := c.client.GetMetrics(environmentID, serviceID)
+	metrics, metricsCacheHit, err := c.client.GetMetrics(environmentID, serviceID)
 	if err != nil {
 		return fmt.Errorf("failed to get metrics: %w", err)
 	}
@@ -221,6 +223,8 @@ func (c *RailwayCollector) collectServiceMetrics(ch chan<- prometheus.Metric, se
 		"project_name", serviceInfo.Project.Name,
 		"environment_id", environmentID,
 		"metric_count", len(metrics),
+		"service_info_cache_hit", serviceInfoCacheHit,
+		"metrics_cache_hit", metricsCacheHit,
 	)
 
 	return nil
