@@ -62,6 +62,7 @@ func main() {
 
 	// Create cache
 	metricsCache := cache.NewCache()
+	defer metricsCache.Close() // Ensure cleanup on shutdown
 
 	// Create Railway API client with cache
 	railwayClient := railway.NewClientWithCache(
@@ -135,8 +136,21 @@ func warmupCache(client *railway.Client, targets []config.EnvironmentTarget) {
 
 			// Pre-fetch service info and metrics for each service
 			for _, svc := range services {
-				client.GetServiceInfo(svc.Node.ID)
-				client.GetMetrics(envInfo.ID, svc.Node.ID)
+				if _, err := client.GetServiceInfo(svc.Node.ID); err != nil {
+					logger.Stderr.Error("Failed to warm up service info",
+						"project_id", t.ProjectID,
+						"environment_id", envInfo.ID,
+						"service_id", svc.Node.ID,
+						"error", err)
+				}
+
+				if _, err := client.GetMetrics(envInfo.ID, svc.Node.ID); err != nil {
+					logger.Stderr.Error("Failed to warm up service metrics",
+						"project_id", t.ProjectID,
+						"environment_id", envInfo.ID,
+						"service_id", svc.Node.ID,
+						"error", err)
+				}
 			}
 		}(target)
 	}
@@ -172,6 +186,9 @@ func indexHandler(cfg *config.Config) http.HandlerFunc {
 			},
 		}
 
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			logger.Stderr.Error("Failed to encode index response", "error", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		}
 	}
 }

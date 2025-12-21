@@ -13,12 +13,22 @@ type CacheEntry struct {
 
 // Cache provides a thread-safe cache with TTL support
 type Cache struct {
-	data sync.Map
+	data            sync.Map
+	cleanupInterval time.Duration
+	stopCh          chan struct{}
+	once            sync.Once
 }
 
 // NewCache creates a new cache instance
 func NewCache() *Cache {
-	return &Cache{}
+	c := &Cache{
+		cleanupInterval: 1 * time.Minute,
+		stopCh:          make(chan struct{}),
+	}
+
+	go c.startCleanup()
+
+	return c
 }
 
 // Get retrieves a value from the cache if it exists and hasn't expired
@@ -61,5 +71,42 @@ func (c *Cache) Clear() {
 	c.data.Range(func(key, value interface{}) bool {
 		c.data.Delete(key)
 		return true
+	})
+}
+
+// startCleanup runs a background goroutine that periodically removes expired entries
+func (c *Cache) startCleanup() {
+	ticker := time.NewTicker(c.cleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			c.cleanupExpired()
+		case <-c.stopCh:
+			return
+		}
+	}
+}
+
+// cleanupExpired removes all expired entries from the cache
+func (c *Cache) cleanupExpired() {
+	now := time.Now()
+	c.data.Range(func(key, value interface{}) bool {
+		entry, ok := value.(CacheEntry)
+		if !ok {
+			return true
+		}
+		if now.After(entry.ExpiresAt) {
+			c.data.Delete(key)
+		}
+		return true
+	})
+}
+
+// Close stops the background cleanup goroutine
+func (c *Cache) Close() {
+	c.once.Do(func() {
+		close(c.stopCh)
 	})
 }

@@ -31,6 +31,7 @@ type Client struct {
 	cache       *cache.Cache
 	cacheTTLs   CacheTTLConfig
 	rateLimitMu sync.Mutex
+	requestSem  chan struct{} // Semaphore to limit concurrent requests
 }
 
 // NewClient creates a new Railway API client without caching
@@ -44,6 +45,7 @@ func NewClient(apiKey string) *Client {
 		cacheTTLs: CacheTTLConfig{
 			EnableCache: false,
 		},
+		requestSem: make(chan struct{}, 10), // Allow max 10 concurrent requests
 	}
 }
 
@@ -54,8 +56,9 @@ func NewClientWithCache(apiKey string, cacheInstance *cache.Cache, cacheTTLs Cac
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		cache:     cacheInstance,
-		cacheTTLs: cacheTTLs,
+		cache:      cacheInstance,
+		cacheTTLs:  cacheTTLs,
+		requestSem: make(chan struct{}, 10), // Allow max 10 concurrent requests
 	}
 }
 
@@ -90,6 +93,10 @@ func (c *Client) checkRateLimitHeaders(resp *http.Response) {
 
 // executeQuery executes a GraphQL query and unmarshals the response
 func (c *Client) executeQuery(query string, variables map[string]interface{}, response interface{}) error {
+	// Acquire semaphore to limit concurrent requests
+	c.requestSem <- struct{}{}
+	defer func() { <-c.requestSem }()
+
 	reqBody := GraphQLRequest{
 		Query:     query,
 		Variables: variables,
@@ -139,7 +146,11 @@ func (c *Client) GetProjectServices(projectID string) ([]ServiceNode, error) {
 	if c.cacheTTLs.EnableCache && c.cache != nil {
 		cacheKey := fmt.Sprintf("project_services:%s", projectID)
 		if cached, ok := c.cache.Get(cacheKey); ok {
-			return cached.([]ServiceNode), nil
+			if services, okType := cached.([]ServiceNode); okType {
+				return services, nil
+			}
+			logger.Stderr.Warn("Invalid cached type for project services, refetching",
+				"project_id", projectID)
 		}
 	}
 
@@ -188,7 +199,11 @@ func (c *Client) GetServiceInfo(serviceID string) (*ServiceInfo, error) {
 	if c.cacheTTLs.EnableCache && c.cache != nil {
 		cacheKey := fmt.Sprintf("service_info:%s", serviceID)
 		if cached, ok := c.cache.Get(cacheKey); ok {
-			return cached.(*ServiceInfo), nil
+			if serviceInfo, okType := cached.(*ServiceInfo); okType {
+				return serviceInfo, nil
+			}
+			logger.Stderr.Warn("Invalid cached type for service info, refetching",
+				"service_id", serviceID)
 		}
 	}
 
@@ -235,7 +250,11 @@ func (c *Client) GetEnvironmentInfo(environmentID string) (*EnvironmentInfo, err
 	if c.cacheTTLs.EnableCache && c.cache != nil {
 		cacheKey := fmt.Sprintf("env_info:%s", environmentID)
 		if cached, ok := c.cache.Get(cacheKey); ok {
-			return cached.(*EnvironmentInfo), nil
+			if envInfo, okType := cached.(*EnvironmentInfo); okType {
+				return envInfo, nil
+			}
+			logger.Stderr.Warn("Invalid cached type for environment info, refetching",
+				"environment_id", environmentID)
 		}
 	}
 
@@ -279,7 +298,12 @@ func (c *Client) GetMetrics(environmentID, serviceID string) (map[string]float64
 	if c.cacheTTLs.EnableCache && c.cache != nil {
 		cacheKey := fmt.Sprintf("metrics:%s:%s", environmentID, serviceID)
 		if cached, ok := c.cache.Get(cacheKey); ok {
-			return cached.(map[string]float64), nil
+			if metrics, okType := cached.(map[string]float64); okType {
+				return metrics, nil
+			}
+			logger.Stderr.Warn("Invalid cached type for metrics, refetching",
+				"environment_id", environmentID,
+				"service_id", serviceID)
 		}
 	}
 
