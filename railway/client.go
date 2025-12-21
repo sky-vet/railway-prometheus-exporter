@@ -5,26 +5,86 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
+	"sync"
 	"time"
+
+	"github.com/mykalmachon/railway-prometheus-exporter/cache"
+	"github.com/mykalmachon/railway-prometheus-exporter/logger"
 )
 
 const (
 	railwayAPIURL = "https://backboard.railway.com/graphql/v2"
 )
 
-// Client is a Railway GraphQL API client
-type Client struct {
-	apiKey     string
-	httpClient *http.Client
+// CacheTTLConfig holds cache TTL configuration
+type CacheTTLConfig struct {
+	MetricsTTL    time.Duration
+	DiscoveryTTL  time.Duration
+	EnableCache   bool
 }
 
-// NewClient creates a new Railway API client
+// Client is a Railway GraphQL API client
+type Client struct {
+	apiKey      string
+	httpClient  *http.Client
+	cache       *cache.Cache
+	cacheTTLs   CacheTTLConfig
+	rateLimitMu sync.Mutex
+}
+
+// NewClient creates a new Railway API client without caching
 func NewClient(apiKey string) *Client {
 	return &Client{
 		apiKey: apiKey,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		cache: nil,
+		cacheTTLs: CacheTTLConfig{
+			EnableCache: false,
+		},
+	}
+}
+
+// NewClientWithCache creates a new Railway API client with cache support
+func NewClientWithCache(apiKey string, cacheInstance *cache.Cache, cacheTTLs CacheTTLConfig) *Client {
+	return &Client{
+		apiKey: apiKey,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+		cache:     cacheInstance,
+		cacheTTLs: cacheTTLs,
+	}
+}
+
+// checkRateLimitHeaders checks and logs Railway API rate limit headers
+func (c *Client) checkRateLimitHeaders(resp *http.Response) {
+	c.rateLimitMu.Lock()
+	defer c.rateLimitMu.Unlock()
+
+	// Check for rate limit remaining headers (various formats)
+	remaining := resp.Header.Get("X-RateLimit-Remaining")
+	if remaining == "" {
+		remaining = resp.Header.Get("RateLimit-Remaining")
+	}
+	if remaining == "" {
+		remaining = resp.Header.Get("X-Rate-Limit-Remaining")
+	}
+
+	if remaining != "" {
+		if val, err := strconv.Atoi(remaining); err == nil && val < 10 {
+			logger.Stdout.Warn("Railway API rate limit approaching",
+				"remaining", val)
+		}
+	}
+
+	// Check for Retry-After header (indicates rate limiting)
+	retryAfter := resp.Header.Get("Retry-After")
+	if retryAfter != "" {
+		logger.Stderr.Warn("Railway API rate limited",
+			"retry_after", retryAfter)
 	}
 }
 
@@ -54,6 +114,14 @@ func (c *Client) executeQuery(query string, variables map[string]interface{}, re
 	}
 	defer resp.Body.Close()
 
+	// Check rate limit headers
+	c.checkRateLimitHeaders(resp)
+
+	// Check for rate limiting
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return fmt.Errorf("rate limited by Railway API")
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
@@ -67,6 +135,14 @@ func (c *Client) executeQuery(query string, variables map[string]interface{}, re
 
 // GetProjectServices retrieves all services for a given project
 func (c *Client) GetProjectServices(projectID string) ([]ServiceNode, error) {
+	// Check cache first
+	if c.cacheTTLs.EnableCache && c.cache != nil {
+		cacheKey := fmt.Sprintf("project_services:%s", projectID)
+		if cached, ok := c.cache.Get(cacheKey); ok {
+			return cached.([]ServiceNode), nil
+		}
+	}
+
 	query := `
 		query getProjectServices($projectId: String!) {
 			project(id: $projectId) {
@@ -95,11 +171,27 @@ func (c *Client) GetProjectServices(projectID string) ([]ServiceNode, error) {
 		return nil, fmt.Errorf("graphql error: %s", response.Errors[0].Message)
 	}
 
-	return response.Data.Project.Services.Edges, nil
+	result := response.Data.Project.Services.Edges
+
+	// Cache the result
+	if c.cacheTTLs.EnableCache && c.cache != nil {
+		cacheKey := fmt.Sprintf("project_services:%s", projectID)
+		c.cache.Set(cacheKey, result, c.cacheTTLs.DiscoveryTTL)
+	}
+
+	return result, nil
 }
 
 // GetServiceInfo retrieves metadata about a specific service
 func (c *Client) GetServiceInfo(serviceID string) (*ServiceInfo, error) {
+	// Check cache first
+	if c.cacheTTLs.EnableCache && c.cache != nil {
+		cacheKey := fmt.Sprintf("service_info:%s", serviceID)
+		if cached, ok := c.cache.Get(cacheKey); ok {
+			return cached.(*ServiceInfo), nil
+		}
+	}
+
 	query := `
 		query getServiceInfo($serviceId: String!) {
 			service(id: $serviceId) {
@@ -126,11 +218,27 @@ func (c *Client) GetServiceInfo(serviceID string) (*ServiceInfo, error) {
 		return nil, fmt.Errorf("graphql error: %s", response.Errors[0].Message)
 	}
 
-	return &response.Data.Service, nil
+	result := &response.Data.Service
+
+	// Cache the result
+	if c.cacheTTLs.EnableCache && c.cache != nil {
+		cacheKey := fmt.Sprintf("service_info:%s", serviceID)
+		c.cache.Set(cacheKey, result, c.cacheTTLs.DiscoveryTTL)
+	}
+
+	return result, nil
 }
 
 // GetEnvironmentInfo retrieves metadata about a specific environment
 func (c *Client) GetEnvironmentInfo(environmentID string) (*EnvironmentInfo, error) {
+	// Check cache first
+	if c.cacheTTLs.EnableCache && c.cache != nil {
+		cacheKey := fmt.Sprintf("env_info:%s", environmentID)
+		if cached, ok := c.cache.Get(cacheKey); ok {
+			return cached.(*EnvironmentInfo), nil
+		}
+	}
+
 	query := `
 		query getEnvironmentInfo($environmentId: String!) {
 			environment(id: $environmentId) {
@@ -154,11 +262,27 @@ func (c *Client) GetEnvironmentInfo(environmentID string) (*EnvironmentInfo, err
 		return nil, fmt.Errorf("graphql error: %s", response.Errors[0].Message)
 	}
 
-	return &response.Data.Environment, nil
+	result := &response.Data.Environment
+
+	// Cache the result
+	if c.cacheTTLs.EnableCache && c.cache != nil {
+		cacheKey := fmt.Sprintf("env_info:%s", environmentID)
+		c.cache.Set(cacheKey, result, c.cacheTTLs.DiscoveryTTL)
+	}
+
+	return result, nil
 }
 
 // GetMetrics retrieves current metrics for a specific service
 func (c *Client) GetMetrics(environmentID, serviceID string) (map[string]float64, error) {
+	// Check cache first
+	if c.cacheTTLs.EnableCache && c.cache != nil {
+		cacheKey := fmt.Sprintf("metrics:%s:%s", environmentID, serviceID)
+		if cached, ok := c.cache.Get(cacheKey); ok {
+			return cached.(map[string]float64), nil
+		}
+	}
+
 	// Get metrics from the last 5 minutes to ensure we get recent data
 	startDate := time.Now().Add(-5 * time.Minute).Format(time.RFC3339)
 
@@ -205,6 +329,12 @@ func (c *Client) GetMetrics(environmentID, serviceID string) (map[string]float64
 			latestValue := metric.Values[len(metric.Values)-1]
 			metrics[metric.Measurement] = latestValue.Value
 		}
+	}
+
+	// Cache the result
+	if c.cacheTTLs.EnableCache && c.cache != nil {
+		cacheKey := fmt.Sprintf("metrics:%s:%s", environmentID, serviceID)
+		c.cache.Set(cacheKey, metrics, c.cacheTTLs.MetricsTTL)
 	}
 
 	return metrics, nil

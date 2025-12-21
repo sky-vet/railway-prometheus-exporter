@@ -2,6 +2,7 @@ package collector
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/mykalmachon/railway-prometheus-exporter/config"
@@ -60,16 +61,32 @@ func (c *RailwayCollector) Collect(ch chan<- prometheus.Metric) {
 		}
 	}()
 
-	// Iterate through all configured targets (project-environment pairs)
+	var wg sync.WaitGroup
+	metricsChan := make(chan prometheus.Metric, 100)
+
+	// Collect from all targets in parallel
 	for _, target := range c.targets {
-		if err := c.collectTargetMetrics(ch, target); err != nil {
-			logger.Stderr.Error("Failed to collect metrics for target",
-				"project_id", target.ProjectID,
-				"environment_id", target.EnvironmentID,
-				"error", err,
-			)
-			continue
-		}
+		wg.Add(1)
+		go func(t config.EnvironmentTarget) {
+			defer wg.Done()
+			if err := c.collectTargetMetrics(metricsChan, t); err != nil {
+				logger.Stderr.Error("Failed to collect target metrics",
+					"project_id", t.ProjectID,
+					"environment_id", t.EnvironmentID,
+					"error", err)
+			}
+		}(target)
+	}
+
+	// Close metrics channel when all targets are done
+	go func() {
+		wg.Wait()
+		close(metricsChan)
+	}()
+
+	// Forward all metrics to Prometheus
+	for metric := range metricsChan {
+		ch <- metric
 	}
 
 	scrapeSuccess = true

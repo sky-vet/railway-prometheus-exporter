@@ -17,6 +17,11 @@ type Config struct {
 	TargetsRaw    string `env:"ENVIRONMENT_TARGETS,required"`
 	Port          string `env:"PORT" envDefault:"9090"`
 
+	// Cache configuration
+	MetricsCacheTTL   int  `env:"METRICS_CACHE_TTL" envDefault:"30"`
+	DiscoveryCacheTTL int  `env:"DISCOVERY_CACHE_TTL" envDefault:"300"`
+	EnableCache       bool `env:"ENABLE_CACHE" envDefault:"true"`
+
 	// Parsed targets (not from env, populated by GetConfig())
 	Targets []EnvironmentTarget
 }
