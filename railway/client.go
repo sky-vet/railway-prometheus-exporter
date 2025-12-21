@@ -24,12 +24,19 @@ type CacheTTLConfig struct {
 	EnableCache   bool
 }
 
+// RetryConfig holds retry configuration
+type RetryConfig struct {
+	MaxRetries     int
+	InitialBackoff time.Duration
+}
+
 // Client is a Railway GraphQL API client
 type Client struct {
 	apiKey      string
 	httpClient  *http.Client
 	cache       *cache.Cache
 	cacheTTLs   CacheTTLConfig
+	retryConfig RetryConfig
 	rateLimitMu sync.Mutex
 	requestSem  chan struct{} // Semaphore to limit concurrent requests
 }
@@ -45,20 +52,25 @@ func NewClient(apiKey string) *Client {
 		cacheTTLs: CacheTTLConfig{
 			EnableCache: false,
 		},
+		retryConfig: RetryConfig{
+			MaxRetries:     3,
+			InitialBackoff: 100 * time.Millisecond,
+		},
 		requestSem: make(chan struct{}, 10), // Allow max 10 concurrent requests
 	}
 }
 
 // NewClientWithCache creates a new Railway API client with cache support
-func NewClientWithCache(apiKey string, cacheInstance *cache.Cache, cacheTTLs CacheTTLConfig) *Client {
+func NewClientWithCache(apiKey string, cacheInstance *cache.Cache, cacheTTLs CacheTTLConfig, retryConfig RetryConfig) *Client {
 	return &Client{
 		apiKey: apiKey,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		cache:      cacheInstance,
-		cacheTTLs:  cacheTTLs,
-		requestSem: make(chan struct{}, 10), // Allow max 10 concurrent requests
+		cache:       cacheInstance,
+		cacheTTLs:   cacheTTLs,
+		retryConfig: retryConfig,
+		requestSem:  make(chan struct{}, 10), // Allow max 10 concurrent requests
 	}
 }
 
@@ -91,11 +103,29 @@ func (c *Client) checkRateLimitHeaders(resp *http.Response) {
 	}
 }
 
-// executeQuery executes a GraphQL query and unmarshals the response
-func (c *Client) executeQuery(query string, variables map[string]interface{}, response interface{}) error {
+// isRetryableError determines if an error should be retried
+func isRetryableError(statusCode int) bool {
+	// Retry on rate limiting, server errors, and service unavailable
+	return statusCode == http.StatusTooManyRequests ||
+		statusCode == http.StatusInternalServerError ||
+		statusCode == http.StatusBadGateway ||
+		statusCode == http.StatusServiceUnavailable ||
+		statusCode == http.StatusGatewayTimeout
+}
+
+// executeQuery executes a GraphQL query and unmarshals the response with retry logic
+func (c *Client) executeQuery(query string, variables map[string]interface{}, response interface{}) (err error) {
 	// Acquire semaphore to limit concurrent requests
 	c.requestSem <- struct{}{}
-	defer func() { <-c.requestSem }()
+
+	// CRITICAL: Release semaphore and recover from panics
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic in executeQuery: %v", r)
+			logger.Stderr.Error("Panic recovered in executeQuery", "panic", r)
+		}
+		<-c.requestSem // Always release semaphore, even on panic
+	}()
 
 	reqBody := GraphQLRequest{
 		Query:     query,
@@ -107,37 +137,59 @@ func (c *Client) executeQuery(query string, variables map[string]interface{}, re
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", railwayAPIURL, bytes.NewBuffer(jsonBody))
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+	var lastErr error
+	backoff := c.retryConfig.InitialBackoff
+
+	// Retry loop with exponential backoff
+	for attempt := 0; attempt <= c.retryConfig.MaxRetries; attempt++ {
+		// Add delay before retry (but not on first attempt)
+		if attempt > 0 {
+			logger.Stdout.Info("Retrying Railway API request",
+				"attempt", attempt,
+				"max_retries", c.retryConfig.MaxRetries,
+				"backoff_ms", backoff.Milliseconds())
+			time.Sleep(backoff)
+			backoff *= 2 // Exponential backoff
+		}
+
+		req, err := http.NewRequest("POST", railwayAPIURL, bytes.NewBuffer(jsonBody))
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to execute request: %w", err)
+			// Network errors are retryable
+			continue
+		}
+		defer resp.Body.Close()
+
+		// Check rate limit headers
+		c.checkRateLimitHeaders(resp)
+
+		// Check for retryable status codes
+		if isRetryableError(resp.StatusCode) {
+			lastErr = fmt.Errorf("retryable error, status code: %d", resp.StatusCode)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(response); err != nil {
+			return fmt.Errorf("failed to decode response: %w", err)
+		}
+
+		return nil // Success!
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to execute request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Check rate limit headers
-	c.checkRateLimitHeaders(resp)
-
-	// Check for rate limiting
-	if resp.StatusCode == http.StatusTooManyRequests {
-		return fmt.Errorf("rate limited by Railway API")
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(response); err != nil {
-		return fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return nil
+	// All retries exhausted
+	return fmt.Errorf("request failed after %d retries: %w", c.retryConfig.MaxRetries, lastErr)
 }
 
 // GetProjectServices retrieves all services for a given project

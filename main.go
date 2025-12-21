@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -60,8 +63,8 @@ func main() {
 		)
 	}
 
-	// Create cache
-	metricsCache := cache.NewCache()
+	// Create cache with configured max size
+	metricsCache := cache.NewCacheWithMaxSize(cfg.CacheMaxSize)
 	defer metricsCache.Close() // Ensure cleanup on shutdown
 
 	// Create Railway API client with cache
@@ -73,12 +76,22 @@ func main() {
 			DiscoveryTTL: time.Duration(cfg.DiscoveryCacheTTL) * time.Second,
 			EnableCache:  cfg.EnableCache,
 		},
+		railway.RetryConfig{
+			MaxRetries:     cfg.MaxRetries,
+			InitialBackoff: time.Duration(cfg.InitialBackoff) * time.Millisecond,
+		},
 	)
 
 	logger.Stdout.Info("Cache configuration",
 		"enabled", cfg.EnableCache,
 		"metrics_ttl_seconds", cfg.MetricsCacheTTL,
 		"discovery_ttl_seconds", cfg.DiscoveryCacheTTL,
+		"max_size", cfg.CacheMaxSize,
+	)
+
+	logger.Stdout.Info("Retry configuration",
+		"max_retries", cfg.MaxRetries,
+		"initial_backoff_ms", cfg.InitialBackoff,
 	)
 
 	// Warm up cache if enabled
@@ -98,13 +111,44 @@ func main() {
 	http.HandleFunc("/health", healthHandler)
 	http.HandleFunc("/", indexHandler(cfg))
 
-	// Start HTTP server
+	// Create HTTP server with timeouts
 	addr := ":" + cfg.Port
-	logger.Stdout.Info("HTTP server listening", "address", addr)
-	if err := http.ListenAndServe(addr, nil); err != nil {
-		logger.Stderr.Error("HTTP server failed", "error", err)
+	server := &http.Server{
+		Addr:         addr,
+		Handler:      nil, // Use default ServeMux
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// Channel to listen for OS signals
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
+
+	// Start server in background goroutine
+	go func() {
+		logger.Stdout.Info("HTTP server listening", "address", addr)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Stderr.Error("HTTP server failed", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Wait for shutdown signal
+	sig := <-sigChan
+	logger.Stdout.Info("Received shutdown signal, gracefully shutting down...", "signal", sig)
+
+	// Create shutdown context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Attempt graceful shutdown
+	if err := server.Shutdown(ctx); err != nil {
+		logger.Stderr.Error("Server shutdown failed", "error", err)
 		os.Exit(1)
 	}
+
+	logger.Stdout.Info("Server stopped gracefully")
 }
 
 // warmupCache pre-populates the cache with initial data
@@ -115,6 +159,15 @@ func warmupCache(client *railway.Client, targets []config.EnvironmentTarget) {
 	for _, target := range targets {
 		wg.Add(1)
 		go func(t config.EnvironmentTarget) {
+			// Panic recovery MUST be first to ensure wg.Done() always executes
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Stderr.Error("Panic recovered in cache warmup goroutine",
+						"project_id", t.ProjectID,
+						"environment_id", t.EnvironmentID,
+						"panic", r)
+				}
+			}()
 			defer wg.Done()
 
 			// Pre-fetch environment info and services

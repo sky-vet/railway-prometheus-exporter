@@ -3,6 +3,7 @@ package collector
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mykalmachon/railway-prometheus-exporter/config"
@@ -42,7 +43,7 @@ func (c *RailwayCollector) Describe(ch chan<- *prometheus.Desc) {
 // Collect implements prometheus.Collector
 func (c *RailwayCollector) Collect(ch chan<- prometheus.Metric) {
 	startTime := time.Now()
-	scrapeSuccess := false
+	var successCount atomic.Int32 // Track number of successful target collections
 
 	defer func() {
 		scrapeDuration := time.Since(startTime).Seconds()
@@ -52,7 +53,8 @@ func (c *RailwayCollector) Collect(ch chan<- prometheus.Metric) {
 			scrapeDuration,
 		)
 
-		if scrapeSuccess {
+		// Only report success if at least one target succeeded
+		if successCount.Load() > 0 {
 			ch <- prometheus.MustNewConstMetric(
 				lastScrapeSuccessDesc,
 				prometheus.GaugeValue,
@@ -68,12 +70,25 @@ func (c *RailwayCollector) Collect(ch chan<- prometheus.Metric) {
 	for _, target := range c.targets {
 		wg.Add(1)
 		go func(t config.EnvironmentTarget) {
+			// Panic recovery MUST be first to ensure wg.Done() always executes
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Stderr.Error("Panic recovered in collector goroutine",
+						"project_id", t.ProjectID,
+						"environment_id", t.EnvironmentID,
+						"panic", r)
+				}
+			}()
 			defer wg.Done()
+
 			if err := c.collectTargetMetrics(metricsChan, t); err != nil {
 				logger.Stderr.Error("Failed to collect target metrics",
 					"project_id", t.ProjectID,
 					"environment_id", t.EnvironmentID,
 					"error", err)
+			} else {
+				// Target succeeded, increment success counter
+				successCount.Add(1)
 			}
 		}(target)
 	}
@@ -88,8 +103,6 @@ func (c *RailwayCollector) Collect(ch chan<- prometheus.Metric) {
 	for metric := range metricsChan {
 		ch <- metric
 	}
-
-	scrapeSuccess = true
 }
 
 // collectTargetMetrics collects metrics for all services in a project-environment pair
