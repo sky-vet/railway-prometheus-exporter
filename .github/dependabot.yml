@@ -1,0 +1,14 @@
+# Version updates: minor + patch bumps land as one grouped PR per ecosystem;
+# each major bump comes as its own PR. Security updates are enabled in the repo
+# settings and arrive independently of the schedules below (SKYV-1152).
+version: 2
+updates:
+  # Go modules of the exporter (go.mod).
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      gomod-minor-patch:
+        update-types: [minor, patch]
